@@ -1,0 +1,10 @@
+# secrets and private package data — never commit
+.env
+.dev.vars
+*.local.json
+*.pdf
+# build/tooling
+node_modules/
+.wrangler/
+src/geo-data.json
+data/geonames/

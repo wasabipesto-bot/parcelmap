@@ -1,0 +1,344 @@
+/* Palette: dataviz reference instance. Stage colours are an ordinal blue ramp
+   (validated light 250/400/550/700, dark 600/450/300/150); problems use the
+   reserved status-critical red and always carry an icon + label. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --hairline: #e1e0d9;
+  --ring: rgba(11, 11, 11, 0.1);
+  --stage-awaiting: #86b6ef;
+  --stage-transit: #3987e5;
+  --stage-out: #1c5cab;
+  --stage-delivered: #0d366b;
+  --stage-problem: #d03b3b;
+  --water: #f0efec;
+  --land: #fcfcfb;
+  --coast: #c3c2b7;
+  --border: #e1e0d9;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --hairline: #2c2c2a;
+    --ring: rgba(255, 255, 255, 0.1);
+    --stage-awaiting: #184f95;
+    --stage-transit: #2a78d6;
+    --stage-out: #6da7ec;
+    --stage-delivered: #b7d3f6;
+    --water: #0d0d0d;
+    --land: #1a1a19;
+    --coast: #383835;
+    --border: #2c2c2a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.45 var(--font);
+}
+a {
+  color: inherit;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  height: 100%;
+}
+#map {
+  height: 100%;
+}
+#map.leaflet-container {
+  background: var(--water);
+}
+aside {
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
+  padding: 20px 20px 16px;
+}
+@media (max-width: 800px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 55vh auto;
+    height: auto;
+  }
+  #map {
+    height: 55vh;
+  }
+  aside {
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
+  }
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.updated,
+.line-key,
+footer {
+  color: var(--ink-2);
+  margin: 0;
+}
+.stale {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--ring);
+  color: var(--ink);
+}
+.stale::before {
+  content: "⚠ ";
+  color: var(--stage-problem);
+}
+
+.legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 16px 0 6px;
+  padding: 0;
+}
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend li.zero {
+  color: var(--muted);
+}
+.legend .count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.line-key {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.line-key > span {
+  white-space: nowrap;
+  margin-right: 10px;
+}
+.swatch-line {
+  display: inline-block;
+  vertical-align: middle;
+  width: 20px;
+  border-top: 2px solid var(--muted);
+}
+.swatch-line.dashed {
+  border-top-style: dashed;
+}
+
+.packages {
+  list-style: none;
+  margin: 14px 0 16px;
+  padding: 0;
+}
+.pkg {
+  border-top: 1px solid var(--hairline);
+  padding: 10px 0 12px;
+}
+.pkg.focus .pkg-title {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.pkg-head {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.pkg-head:focus-visible {
+  outline: 2px solid var(--stage-transit);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.pkg-title {
+  font-weight: 600;
+  font-size: 15px;
+  flex: 1;
+}
+.pkg-left {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.chevron {
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.pkg-head[aria-expanded="true"] .chevron {
+  transform: rotate(90deg);
+}
+.pkg-status,
+.pkg-eta {
+  margin: 2px 0 0 18px;
+  color: var(--ink-2);
+}
+.pkg-status .status-text {
+  color: var(--ink);
+  font-weight: 500;
+}
+.pkg[data-stage="problem"] .status-text::before {
+  content: "⚠ ";
+  color: var(--stage-problem);
+}
+.bar {
+  margin: 8px 0 0 18px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: var(--c);
+}
+.timeline {
+  list-style: none;
+  margin: 10px 0 0 18px;
+  padding: 0 0 0 12px;
+  border-left: 1px solid var(--hairline);
+}
+.timeline li {
+  margin: 0 0 8px;
+}
+.timeline .when {
+  color: var(--muted);
+  font-size: 12px;
+}
+.timeline .msg {
+  display: block;
+}
+.timeline .where {
+  color: var(--ink-2);
+}
+time[title] {
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+footer {
+  font-size: 12px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+
+/* map marks */
+.pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pin span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 0 2px var(--surface);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.pin[data-stage="problem"] span {
+  width: 14px;
+  height: 14px;
+  color: #fff;
+  font: 700 10px/14px var(--font);
+  text-align: center;
+}
+.pin[data-stage="problem"] span::after {
+  content: "!";
+}
+.pin.dim span {
+  opacity: 0.2;
+}
+.pin.focus span {
+  transform: scale(1.35);
+}
+.leaflet-tooltip.place-label {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0 0 0 2px;
+  color: var(--ink-2);
+  font: 12px var(--font);
+  text-shadow: 0 0 2px var(--surface), 0 0 2px var(--surface), 0 0 3px var(--surface);
+}
+.leaflet-tooltip.place-label::before {
+  display: none;
+}
+.leaflet-tooltip.place-label.origin {
+  color: var(--ink);
+  font-weight: 600;
+}
+.leaflet-tooltip.place-label.dim {
+  opacity: 0.35;
+}
+.leaflet-tooltip.mark-tip {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font: 13px/1.4 var(--font);
+}
+.leaflet-tooltip.mark-tip::before {
+  display: none;
+}
+.mark-tip .t {
+  font-weight: 600;
+}
+.mark-tip .s {
+  color: var(--ink-2);
+}
+.leaflet-container {
+  font: 12px var(--font);
+}
+.leaflet-container .leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: var(--ink-2);
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--ink-2);
+}
+.leaflet-bar a {
+  background: var(--surface);
+  color: var(--ink);
+  border-bottom-color: var(--hairline);
+}

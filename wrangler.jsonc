@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "parcelmap",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "public" },
+  // Snapshot cache (created with `just kv`).
+  "kv_namespaces": [{ "binding": "CACHE", "id": "4994c506eb6e4672a4711ac6aaad88bd" }],
+  "vars": { "CACHE_TTL_SECONDS": "300" },
+  // Secrets (never in this file): EASYPOST_API_KEY, PACKAGES — see README.
+  "observability": { "enabled": true }
+}

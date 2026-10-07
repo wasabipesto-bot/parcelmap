@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Parcel map</title>
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <div id="map" role="region" aria-label="Map of package locations"></div>
+      <aside>
+        <header>
+          <h1 id="title">Parcel map</h1>
+          <p class="updated" id="updated"></p>
+          <p class="stale" id="stale" role="status" hidden></p>
+        </header>
+        <ul class="legend" id="legend" aria-label="Packages by stage"></ul>
+        <p class="line-key">
+          <span><span class="swatch-line"></span> traveled</span>
+          <span><span class="swatch-line dashed"></span> remaining (straight line, not the actual route)</span>
+        </p>
+        <ol class="packages" id="packages"></ol>
+        <footer>
+          Positions are the city of each package's latest USPS scan, so markers jump from facility to
+          facility rather than moving smoothly. Place data © <a href="https://www.geonames.org/">GeoNames</a>
+          (CC BY 4.0).
+        </footer>
+      </aside>
+    </div>
+    <!--SNAPSHOT-->
+    <script src="/vendor/leaflet/leaflet.js"></script>
+    <script src="/vendor/topojson-client/topojson-client.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

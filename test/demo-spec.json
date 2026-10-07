@@ -1,0 +1,15 @@
+{
+  "_comment": "Fictional demo shipments for local development and tests. Real package data never goes in the repo.",
+  "origin": { "city": "KANSAS CITY", "state": "MO", "zip": "64105" },
+  "originFacility": { "city": "KANSAS CITY", "state": "MO", "zip": "64121" },
+  "packages": [
+    { "id": "trk_demo_1", "city": "SEATTLE", "state": "WA", "zip": "98101", "hub": { "city": "SEATTLE", "state": "WA", "zip": "98134" }, "stage": "dest_facility" },
+    { "id": "trk_demo_2", "city": "AUSTIN", "state": "TX", "zip": "78701", "hub": { "city": "AUSTIN", "state": "TX", "zip": "78710" }, "stage": "delivered" },
+    { "id": "trk_demo_3", "city": "AUSTIN", "state": "TX", "zip": "78704", "hub": { "city": "AUSTIN", "state": "TX", "zip": "78710" }, "stage": "out_for_delivery" },
+    { "id": "trk_demo_4", "city": "PORTLAND", "state": "ME", "zip": "04101", "hub": { "city": "SCARBOROUGH", "state": "ME", "zip": "04074" }, "stage": "origin_facility" },
+    { "id": "trk_demo_5", "city": "HONOLULU", "state": "HI", "zip": "96813", "hub": { "city": "HONOLULU", "state": "HI", "zip": "96820" }, "stage": "in_transit" },
+    { "id": "trk_demo_6", "city": "PHOENIX", "state": "AZ", "zip": "85004", "hub": { "city": "PHOENIX", "state": "AZ", "zip": "85026" }, "stage": "label" },
+    { "id": "trk_demo_7", "city": "MIAMI", "state": "FL", "zip": "33130", "hub": { "city": "OPA LOCKA", "state": "FL", "zip": "33054" }, "stage": "return_to_sender" },
+    { "id": "trk_demo_8", "city": "PONCE", "state": "PR", "zip": "00730", "hub": { "city": "CAROLINA", "state": "PR", "zip": "00979" }, "stage": "accepted" }
+  ]
+}
