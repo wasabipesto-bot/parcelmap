@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { buildConfig } from "../scripts/config.mjs";
+import { locate } from "../src/geo.js";
 import { buildSnapshot, cleanMessage, disambiguate } from "../src/tracking.js";
 import { buildTracker } from "./fixtures.js";
 
@@ -87,4 +88,43 @@ test("cleanMessage strips ZIPs and delivery detail", () => {
   assert.equal(cleanMessage("Delivered to Agent for Final Delivery", "in_transit"), "Delivered");
   assert.equal(cleanMessage("Arrived at Post Office, AUSTIN TX 78701-1234", "in_transit"), "Arrived at Post Office, AUSTIN TX");
   assert.equal(cleanMessage("Delivery Attempted - No Access to Delivery Location", "failure"), "Delivery Attempted - No Access to Delivery Location");
+});
+
+test("international destinations are labeled by city and country", () => {
+  assert.ok(byLabel["Kyoto, Japan"]);
+  assert.ok(byLabel["Bendigo, Australia"]);
+});
+
+test("international scans: ISC facility, country-only scans, foreign cities", () => {
+  const p = byLabel["Kyoto, Japan"]; // last scan: "Held in Customs" with only the country
+  assert.equal(p.stage, "transit");
+  assert.equal(p.current.name, "Japan");
+  assert.ok(p.events.some((e) => e.place === "Chicago, IL"), "ISC CHICAGO IL (USPS) placed in Chicago");
+  const b = byLabel["Bendigo, Australia"];
+  assert.ok(b.events.some((e) => e.place === "Melbourne, Australia"));
+  assert.equal(b.stage, "delivered");
+});
+
+test("a scan in a destination town the table lacks uses the destination's coordinates", () => {
+  const p = byLabel["Emerald Creek, Australia"];
+  assert.equal(p.stage, "out");
+  assert.deepEqual([p.current.lat, p.current.lon], [p.dest.lat, p.dest.lon]);
+  assert.equal(p.events[0].place, "Emerald Creek, Australia");
+});
+
+test("cleanMessage strips UK postcodes and Eircodes", () => {
+  assert.equal(cleanMessage("Arrived at delivery office, AB1 2CD", "in_transit"), "Arrived at delivery office");
+  assert.equal(cleanMessage("Arrived at delivery office A65 F4E2", "in_transit"), "Arrived at delivery office");
+  assert.equal(cleanMessage("Processed Through Facility", "in_transit"), "Processed Through Facility");
+});
+
+test("country-only scans move the marker but never become route vertices", () => {
+  const k = byLabel["Kyoto, Japan"]; // latest scan names only the country
+  assert.equal(k.current.name, "Japan");
+  assert.deepEqual(k.path.at(-1), [k.current.lat, k.current.lon], "path ends at the current position");
+  const b = byLabel["Bendigo, Australia"]; // passed an "Australia"-only scan, then Melbourne, then delivered
+  const au = locate({ country: "AU" });
+  assert.ok(b.events.some((e) => e.place === "Australia"), "fixture has a country-only scan");
+  assert.ok(!b.path.some(([lat, lon]) => lat === au.lat && lon === au.lon), "no vertex at the country centroid");
+  assert.deepEqual(b.path.at(-1), [b.dest.lat, b.dest.lon]);
 });

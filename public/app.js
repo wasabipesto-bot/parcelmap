@@ -104,7 +104,7 @@ const pathArc = (pts) => pts.slice(1).flatMap((q, i) => arc(pts[i], q).slice(i ?
 
 // ---------- map ----------
 
-const map = L.map("map", { minZoom: 2, maxZoom: 8, zoomSnap: 0.25, worldCopyJump: false });
+const map = L.map("map", { minZoom: 1, maxZoom: 8, zoomSnap: 0.25, worldCopyJump: false });
 map.attributionControl.addAttribution("Boundaries: US Census Bureau, Natural Earth");
 const dark = matchMedia("(prefers-color-scheme: dark)");
 
@@ -147,6 +147,7 @@ const placesLayer = L.layerGroup().addTo(map);
 const pinsLayer = L.layerGroup().addTo(map);
 let marks = new Map(); // label -> {lines: [], dest, pin}
 let destLabels = new Map(); // "lat,lon" -> {tip, labels}
+let originLabel = null;
 
 function tipHtml(p) {
   const last = p.events[0];
@@ -173,11 +174,11 @@ function drawMap() {
     const key = `${p.current.lat},${p.current.lon}`;
     groups.set(key, [...(groups.get(key) ?? []), p]);
   }
-  const fanRadius = (n) => (n === 1 ? 0 : 7 + 3 * n);
+  const fanRadius = (n) => (n === 1 ? 0 : Math.min(7 + 3 * n, 30));
 
   const origin = snap.origin;
   const atOrigin = groups.get(`${origin.lat},${origin.lon}`)?.length ?? 0;
-  L.circleMarker(ll(origin), { radius: 5, color: css("--ink-2"), weight: 2, fillColor: css("--surface"), fillOpacity: 1 })
+  originLabel = L.circleMarker(ll(origin), { radius: 5, color: css("--ink-2"), weight: 2, fillColor: css("--surface"), fillOpacity: 1 })
     .bindTooltip(origin.name, {
       permanent: true,
       direction: "left",
@@ -246,8 +247,13 @@ function drawMap() {
 
   if (!fitted) {
     const pts = [ll(snap.origin), ...snap.packages.flatMap((p) => [ll(p.dest), ll(p.current)])];
-    // Extra room on the right for the place labels.
-    map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 40], paddingBottomRight: [110, 40], maxZoom: 7 });
+    // Extra room on the right for the place labels, less of it on a phone.
+    const small = map.getSize().x < 600;
+    map.fitBounds(L.latLngBounds(pts), {
+      paddingTopLeft: small ? [16, 24] : [40, 40],
+      paddingBottomRight: small ? [48, 24] : [110, 40],
+      maxZoom: 7,
+    });
     fitted = true;
   }
   applyFocus();
@@ -272,7 +278,25 @@ function applyFocus() {
   for (const { tip, labels } of destLabels.values()) {
     tip.getElement()?.classList.toggle("dim", focus !== null && !labels.includes(focus));
   }
+  declutter();
   document.querySelectorAll(".pkg").forEach((li) => li.classList.toggle("focus", li.dataset.label === focus));
+}
+
+/** Hide place labels that would overlap one already shown: origin first, then the focused package's. */
+function declutter() {
+  const focus = hovered ?? selected;
+  const tips = [...destLabels.values()]
+    .sort((a, b) => Number(b.labels.includes(focus)) - Number(a.labels.includes(focus)))
+    .map((d) => d.tip.getElement());
+  const shown = [];
+  for (const el of [originLabel?.getTooltip()?.getElement(), ...tips]) {
+    if (!el) continue;
+    el.classList.remove("crowded");
+    const r = el.getBoundingClientRect();
+    const hit = shown.some((q) => r.left < q.right && r.right > q.left && r.top < q.bottom && r.bottom > q.top);
+    if (hit) el.classList.add("crowded");
+    else shown.push(r);
+  }
 }
 
 function setHover(label) {
@@ -414,6 +438,7 @@ dark.addEventListener("change", () => {
   drawBase();
   drawMap();
 });
+map.on("zoomend", declutter);
 setInterval(refresh, REFRESH_MS);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && Date.now() - Date.parse(snap.generatedAt) > REFRESH_MS) refresh();

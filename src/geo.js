@@ -1,5 +1,6 @@
 // City-level geocoding over the GeoNames table built by scripts/build_geo.py.
-// Every coordinate returned is a city centroid; nothing finer reaches the page.
+// Every coordinate returned is a city (or country) centroid; nothing finer
+// reaches the page.
 
 import geoData from "./geo-data.json" with { type: "json" };
 
@@ -23,17 +24,31 @@ const ABBREVIATIONS = {
   W: "WEST",
 };
 
-let byName;
+// Everything USPS might put in a country field, beyond ISO codes and GeoNames names.
+const COUNTRY_ALIASES = {
+  "UNITED STATES": "US",
+  "UNITED STATES OF AMERICA": "US",
+  "GREAT BRITAIN": "GB",
+  "UNITED KINGDOM": "GB",
+  "UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND": "GB",
+  ENGLAND: "GB",
+  SCOTLAND: "GB",
+  WALES: "GB",
+  "NORTHERN IRELAND": "GB",
+};
+// Handled by the ZIP-based US table rather than the world table.
+const US_AREAS = new Set(["US", "PR", "VI", "GU", "AS", "MP"]);
 
-function index() {
-  if (!byName) {
-    byName = new Map();
-    geoData.cities.forEach((c, i) => byName.set(`${c[0].toUpperCase()}|${c[1]}`, i));
-  }
-  return byName;
+/** Uppercase, accents folded, punctuation and hyphens as spaces. */
+export function squash(s) {
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[.,'’()-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
-
-const squash = (s) => String(s ?? "").toUpperCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
 
 export function expandPlaceName(name) {
   return squash(name)
@@ -48,28 +63,89 @@ export function titleCase(name) {
     .replace(/(^|[\s-])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
 }
 
-const place = (i, name) => {
-  const [geoName, state, lat, lon] = geoData.cities[i];
-  return { name: `${name ?? geoName}, ${state}`, lat, lon };
-};
+let idx;
 
-/**
- * Resolve a carrier location ({city, state, zip}) to {name, lat, lon}, or null.
- * Prefers the named city; falls back to the ZIP's city (facility cities such as
- * "NORTH HOUSTON" often aren't places), labelled with the carrier's own name.
- */
-export function locate({ city, state, zip } = {}) {
+function index() {
+  if (!idx) {
+    idx = { us: new Map(), world: new Map(), country: new Map() };
+    geoData.cities.forEach((c, i) => idx.us.set(`${squash(c[0])}|${c[1]}`, i));
+    // Rows are largest-first, so on a name clash the bigger place wins.
+    geoData.world.forEach((c, i) => {
+      const key = `${squash(c[0])}|${c[1]}`;
+      if (!idx.world.has(key)) idx.world.set(key, i);
+    });
+    for (const [cc, [name, iso3]] of Object.entries(geoData.countries)) {
+      for (const alias of [cc, iso3, name]) idx.country.set(squash(alias), cc);
+    }
+    for (const [alias, cc] of Object.entries(COUNTRY_ALIASES)) idx.country.set(alias, cc);
+  }
+  return idx;
+}
+
+/** ISO 3166 alpha-2 code for a country field (code, ISO3 or name), or null. */
+export function countryCode(country) {
+  const key = squash(country);
+  return key ? (index().country.get(key) ?? null) : null;
+}
+
+export function countryName(cc) {
+  return geoData.countries[cc]?.[0] ?? cc;
+}
+
+/** Strip facility decoration: "ISC CHICAGO IL (USPS)" -> "CHICAGO". */
+function cleanCity(city, state) {
+  let c = String(city ?? "").replace(/\(.*?\)/g, " ");
+  c = squash(c).replace(/^ISC /, "");
+  if (state && c.endsWith(` ${squash(state)}`)) c = c.slice(0, -squash(state).length - 1);
+  return c;
+}
+
+function usPlace({ city, state, zip }) {
   const st = squash(state);
-  if (city && st) {
-    for (const name of [squash(city), expandPlaceName(city)]) {
-      const i = index().get(`${name}|${st}`);
-      if (i !== undefined) return place(i);
+  const name = cleanCity(city, st);
+  if (name && st) {
+    for (const n of [name, expandPlaceName(name)]) {
+      const i = index().us.get(`${n}|${st}`);
+      if (i !== undefined) {
+        const [geoName, s, lat, lon] = geoData.cities[i];
+        return { name: `${geoName}, ${s}`, lat, lon };
+      }
     }
   }
-  const z = String(zip ?? "").slice(0, 5);
-  const i = geoData.zips[z];
+  const i = geoData.zips[String(zip ?? "").slice(0, 5)];
   if (i === undefined) return null;
-  const hit = place(i);
-  if (city && st === geoData.cities[i][1]) hit.name = `${titleCase(expandPlaceName(city))}, ${st}`;
-  return hit;
+  const [geoName, s, lat, lon] = geoData.cities[i];
+  // Facility cities ("NORTH HOUSTON") often aren't places: keep the carrier's name, use the ZIP's coordinates.
+  const label = name && st === s ? titleCase(expandPlaceName(name)) : geoName;
+  return { name: `${label}, ${s}`, lat, lon };
+}
+
+function worldPlace(city, cc) {
+  const name = cleanCity(city);
+  if (name) {
+    for (const n of [name, expandPlaceName(name)]) {
+      const i = index().world.get(`${n}|${cc}`);
+      if (i !== undefined) {
+        const [geoName, , lat, lon] = geoData.world[i];
+        return { name: `${geoName}, ${countryName(cc)}`, lat, lon };
+      }
+    }
+  }
+  const c = geoData.countries[cc];
+  return c ? { name: c[0], lat: c[2], lon: c[3] } : null;
+}
+
+/**
+ * Resolve a carrier location ({city, state, zip, country}) to {name, lat, lon}, or null.
+ * US: named city, else the ZIP's city. Elsewhere: named city in that country, else the
+ * country's centroid (USPS often reports only the country for foreign scans).
+ */
+export function locate({ city, state, zip, country } = {}) {
+  const cc = countryCode(country);
+  if (cc && !US_AREAS.has(cc)) return worldPlace(city, cc);
+  const hit = usPlace({ city, state, zip });
+  if (hit || cc || state) return hit;
+  // No country and no state: the "city" may itself be a country ("JAPAN"-style scans).
+  const asCountry = countryCode(city);
+  return asCountry && !US_AREAS.has(asCountry) ? worldPlace(null, asCountry) : null;
 }

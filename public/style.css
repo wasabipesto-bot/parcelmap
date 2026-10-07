@@ -310,6 +310,9 @@ footer {
 .leaflet-tooltip.place-label.dim {
   opacity: 0.35;
 }
+.leaflet-tooltip.place-label.crowded {
+  visibility: hidden;
+}
 .leaflet-tooltip.mark-tip {
   background: var(--surface);
   color: var(--ink);

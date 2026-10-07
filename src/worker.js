@@ -3,29 +3,41 @@
 //
 // Snapshots are cached in KV (the Cache API is a no-op on workers.dev) and
 // rebuilt from EasyPost at most once per CACHE_TTL_SECONDS. If EasyPost fails,
-// the last good snapshot is served with stale: true.
+// the last good snapshot is served with stale: true. The cache key includes a
+// fingerprint of PACKAGES, so changing the package list takes effect at once.
 
 import page from "./index.html";
 import { buildSnapshot, fetchTrackers } from "./tracking.js";
 
-const KEY = "snapshot";
 const RETRY_MS = 60_000;
-let memo = null; // per-isolate copy, saves a KV read on warm requests
+const KEEP_SECONDS = 30 * 86400; // last-good snapshots outlive a quiet month
+let memo = null; // per-isolate {key, snap}, saves a KV read on warm requests
 let failedAt = 0;
+
+async function cacheKey(packages) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(packages ?? ""));
+  const hex = [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `snapshot:${hex}`;
+}
 
 async function snapshot(env, ctx) {
   const ttl = Number(env.CACHE_TTL_SECONDS ?? 300) * 1000;
   const fresh = (s) => s && Date.now() - Date.parse(s.generatedAt) < ttl;
-  if (fresh(memo)) return memo;
-  const cached = await env.CACHE.get(KEY, "json");
-  if (fresh(cached)) return (memo = cached);
+  const key = await cacheKey(env.PACKAGES);
+  if (memo?.key === key && fresh(memo.snap)) return memo.snap;
+  const cached = await env.CACHE.get(key, "json");
+  if (fresh(cached)) {
+    memo = { key, snap: cached };
+    return cached;
+  }
   if (cached && Date.now() - failedAt < RETRY_MS) return { ...cached, stale: true };
   try {
     const config = JSON.parse(env.PACKAGES);
     const trackers = await fetchTrackers(config, { apiKey: env.EASYPOST_API_KEY, base: env.EASYPOST_BASE });
-    memo = buildSnapshot(config, trackers);
-    ctx.waitUntil(env.CACHE.put(KEY, JSON.stringify(memo)));
-    return memo;
+    const snap = buildSnapshot(config, trackers);
+    memo = { key, snap };
+    ctx.waitUntil(env.CACHE.put(key, JSON.stringify(snap), { expirationTtl: KEEP_SECONDS }));
+    return snap;
   } catch (err) {
     console.error("snapshot refresh failed:", err);
     failedAt = Date.now();

@@ -4,7 +4,7 @@
 // EasyPost objects, so tracking codes, tracker ids, ZIP codes, signer names and
 // delivery-spot details ("Front Door/Porch") can't leak through by accident.
 
-import { locate } from "./geo.js";
+import { expandPlaceName, locate } from "./geo.js";
 
 const STAGES = {
   unknown: ["awaiting", "Awaiting pickup"],
@@ -24,12 +24,19 @@ export function stageOf(status) {
   return { stage, statusText: text };
 }
 
-/** Event text with ZIP codes removed and any delivery detail collapsed to "Delivered". */
+// Postcodes that could appear in scan text: US ZIP(+4) and 5-digit codes elsewhere,
+// UK postcodes, Irish Eircodes.
+const POSTCODES = [
+  /\b\d{5}(?:-\d{4})?\b/g,
+  /\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b/gi,
+  /\b(?:[AC-FHKNPRTV-Y]\d{2}|D6W) ?[0-9AC-FHKNPRTV-Y]{4}\b/gi,
+];
+
+/** Event text with postcodes removed and any delivery detail collapsed to "Delivered". */
 export function cleanMessage(message, status) {
   const msg = String(message ?? "").trim();
   if (status === "delivered" || /^delivered\b/i.test(msg)) return "Delivered";
-  return msg
-    .replace(/\b\d{5}(?:-\d{4})?\b/g, "")
+  return POSTCODES.reduce((m, re) => m.replace(re, ""), msg)
     .replace(/\s+([,.])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .replace(/[\s,]+$/, "");
@@ -61,6 +68,17 @@ export function disambiguate(labels) {
 
 const pt = (p) => ({ name: p.name, lat: p.lat, lon: p.lon });
 
+/**
+ * Place a scan. A scan naming the destination town that the table doesn't know
+ * (small towns abroad fall back to the country centroid) uses the destination.
+ */
+function placeScan(loc, pkg) {
+  const hit = locate(loc);
+  if (hit?.name.includes(",")) return hit;
+  const destCity = expandPlaceName(pkg.name.split(",")[0]);
+  return loc.city && expandPlaceName(loc.city) === destCity ? pt(pkg) : hit;
+}
+
 function packageView(pkg, label, origin, tracker) {
   const dest = pt(pkg);
   if (!tracker) {
@@ -82,7 +100,7 @@ function packageView(pkg, label, origin, tracker) {
   const events = (tracker.tracking_details ?? [])
     .map((d) => {
       const at = Date.parse(d.datetime);
-      const where = locate(d.tracking_location ?? {});
+      const where = placeScan(d.tracking_location ?? {}, pkg);
       return {
         t: Number.isNaN(at) ? null : new Date(at).toISOString(),
         msg: cleanMessage(d.message, d.status),
@@ -93,20 +111,22 @@ function packageView(pkg, label, origin, tracker) {
     .filter((e) => e.t)
     .sort((a, b) => a.t.localeCompare(b.t));
 
-  // Traveled path: origin, then each located scan, collapsing repeats of one city.
+  // Traveled path: origin, then each city-level scan, collapsing repeats of one city.
+  // Country-only scans ("arrived in <country>") move the marker but aren't route
+  // vertices, or the line would kink through the country's centroid.
   const path = [[origin.lat, origin.lon]];
+  const visit = (p) => {
+    const [lat, lon] = path[path.length - 1];
+    if (lat !== p.lat || lon !== p.lon) path.push([p.lat, p.lon]);
+  };
   let current = pt(origin);
   for (const e of events) {
     if (!e.where) continue;
     current = pt(e.where);
-    const [lat, lon] = path[path.length - 1];
-    if (lat !== e.where.lat || lon !== e.where.lon) path.push([e.where.lat, e.where.lon]);
+    if (e.where.name.includes(",")) visit(e.where);
   }
-  if (stage === "delivered") {
-    current = { ...dest };
-    const [lat, lon] = path[path.length - 1];
-    if (lat !== dest.lat || lon !== dest.lon) path.push([dest.lat, dest.lon]);
-  }
+  if (stage === "delivered") current = { ...dest };
+  visit(current);
 
   const total = distanceKm(origin, dest);
   const left = distanceKm(current, dest);
