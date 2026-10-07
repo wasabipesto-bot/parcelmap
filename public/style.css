@@ -275,15 +275,22 @@ footer {
   box-shadow: 0 0 0 2px var(--surface);
   transition: opacity 0.15s, transform 0.15s;
 }
-.pin[data-stage="problem"] span {
+.pin[data-stage="problem"] span:not(.count) {
   width: 14px;
   height: 14px;
   color: #fff;
   font: 700 10px/14px var(--font);
   text-align: center;
 }
-.pin[data-stage="problem"] span::after {
+.pin[data-stage="problem"] span:not(.count)::after {
   content: "!";
+}
+.pin .count {
+  width: 22px;
+  height: 22px;
+  font: 700 11px/22px var(--font);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .pin.dim span {
   opacity: 0.2;
@@ -329,6 +336,45 @@ footer {
 }
 .mark-tip .s {
   color: var(--ink-2);
+}
+.group-popup .leaflet-popup-content-wrapper,
+.group-popup .leaflet-popup-tip {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.group-popup .leaflet-popup-content-wrapper {
+  border: 1px solid var(--ring);
+  border-radius: 8px;
+}
+.group-popup .leaflet-popup-content {
+  margin: 8px;
+  font: 13px/1.4 var(--font);
+}
+.group-list .t {
+  font-weight: 600;
+  padding: 0 4px 4px;
+}
+.group-list button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.group-list button:hover,
+.group-list button:focus-visible {
+  background: var(--hairline);
+}
+.group-list .s {
+  color: var(--ink-2);
+  margin-left: auto;
+  padding-left: 10px;
 }
 .leaflet-container {
   font: 12px var(--font);

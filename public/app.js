@@ -124,12 +124,39 @@ async function loadBase() {
     type: "GeometryCollection",
     geometries: world.objects.countries.geometries.filter((g) => g.id !== "840" && g.id !== "630"),
   };
+  // Antarctica is off the map; everything else gets unwrapped across the 180° meridian.
+  others.geometries = others.geometries.filter((g) => g.id !== "010");
   baseData = {
-    world: topojson.feature(world, others),
-    nation: topojson.feature(us, us.objects.nation),
-    states: topojson.mesh(us, us.objects.states, (a, b) => a !== b),
+    world: unwrap(topojson.feature(world, others)),
+    nation: unwrap(topojson.feature(us, us.objects.nation)),
+    states: unwrap(topojson.mesh(us, us.objects.states, (a, b) => a !== b)),
   };
   drawBase();
+}
+
+/**
+ * Shapes that straddle the 180° meridian (eastern Russia, Fiji, the Aleutians) jump
+ * from +180 to -180 mid-ring, which a flat map draws as a stripe across the world.
+ * Shift each vertex by 360° as needed so every ring and line stays continuous.
+ */
+function unwrap(geo) {
+  const line = (pts) => {
+    for (let i = 1; i < pts.length; i++) {
+      while (pts[i][0] - pts[i - 1][0] > 180) pts[i][0] -= 360;
+      while (pts[i][0] - pts[i - 1][0] < -180) pts[i][0] += 360;
+    }
+  };
+  const walk = (g) => {
+    if (!g) return;
+    if (g.type === "LineString") line(g.coordinates);
+    else if (g.type === "MultiLineString" || g.type === "Polygon") g.coordinates.forEach(line);
+    else if (g.type === "MultiPolygon") g.coordinates.forEach((poly) => poly.forEach(line));
+    else if (g.type === "GeometryCollection") g.geometries.forEach(walk);
+  };
+  if (geo.type === "FeatureCollection") geo.features.forEach((f) => walk(f.geometry));
+  else if (geo.type === "Feature") walk(geo.geometry);
+  else walk(geo);
+  return geo;
 }
 
 function drawBase() {
@@ -145,7 +172,8 @@ function drawBase() {
 const linesLayer = L.layerGroup().addTo(map);
 const placesLayer = L.layerGroup().addTo(map);
 const pinsLayer = L.layerGroup().addTo(map);
-let marks = new Map(); // label -> {lines: [], dest, pin}
+let marks = new Map(); // label -> {lines: [], dest}
+let pins = []; // [{marker, labels}], one per city with packages in it
 let destLabels = new Map(); // "lat,lon" -> {tip, labels}
 let originLabel = null;
 
@@ -162,27 +190,86 @@ function tipHtml(p) {
   return div;
 }
 
+/** Hover text for a city holding several packages. */
+function groupTip(members) {
+  return h(
+    "div",
+    {},
+    h("div", { class: "t" }, `${members.length} packages in ${members[0].current.name}`),
+    members.map((p) => h("div", { class: "s" }, `${p.label} · ${p.statusText}`)),
+  );
+}
+
+/** Tap/click list for a city holding several packages; picking one selects it. */
+function groupList(members) {
+  return h(
+    "div",
+    { class: "group-list" },
+    h("div", { class: "t" }, members[0].current.name),
+    members.map((p) => {
+      const b = h(
+        "button",
+        { type: "button" },
+        h("span", { class: "dot", style: `--c:var(--stage-${p.stage})` }),
+        h("span", {}, p.label),
+        h("span", { class: "s" }, p.statusText),
+      );
+      b.addEventListener("click", () => {
+        map.closePopup();
+        select(p.label, { scroll: true, toggle: false });
+      });
+      b.addEventListener("mouseenter", () => setHover(p.label));
+      b.addEventListener("mouseleave", () => setHover(null));
+      return b;
+    }),
+  );
+}
+
+/** Ink for a number set inside a filled mark: whichever of dark or white contrasts more. */
+function inkOn(hex) {
+  const lum = (c) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const l = lum(hex);
+  return (1.05 / (l + 0.05) > (l + 0.05) / (lum("#0b0b0b") + 0.05)) ? "#ffffff" : "#0b0b0b";
+}
+
 function drawMap() {
   linesLayer.clearLayers();
   placesLayer.clearLayers();
   pinsLayer.clearLayers();
   marks = new Map();
+  pins = [];
+  if (!fitted) {
+    const pts = [ll(snap.origin), ...snap.packages.flatMap((p) => [ll(p.dest), ll(p.current)])];
+    // Extra room on the right for the place labels, less of it on a phone.
+    const small = map.getSize().x < 600;
+    map.fitBounds(L.latLngBounds(pts), {
+      paddingTopLeft: small ? [16, 24] : [40, 40],
+      paddingBottomRight: small ? [48, 24] : [110, 40],
+      maxZoom: 7,
+    });
+    fitted = true;
+  }
 
-  // Packages sharing a city fan out around it so each stays visible and hoverable.
+  // Packages in the same city share one marker: a dot, or a count when there are several.
   const groups = new Map();
   for (const p of snap.packages) {
     const key = `${p.current.lat},${p.current.lon}`;
     groups.set(key, [...(groups.get(key) ?? []), p]);
   }
-  const fanRadius = (n) => (n === 1 ? 0 : Math.min(7 + 3 * n, 30));
+  const markRadius = (key) => ((groups.get(key)?.length ?? 0) > 1 ? 13 : 6);
 
+  // Origin label on the left of its marker, or below it when the left edge is too close.
   const origin = snap.origin;
-  const atOrigin = groups.get(`${origin.lat},${origin.lon}`)?.length ?? 0;
+  const r = markRadius(`${origin.lat},${origin.lon}`);
+  const roomLeft = map.latLngToContainerPoint(ll(origin)).x > 130;
   originLabel = L.circleMarker(ll(origin), { radius: 5, color: css("--ink-2"), weight: 2, fillColor: css("--surface"), fillOpacity: 1 })
     .bindTooltip(origin.name, {
       permanent: true,
-      direction: "left",
-      offset: [-(fanRadius(atOrigin) + 10), 0],
+      direction: roomLeft ? "left" : "bottom",
+      offset: roomLeft ? [-(r + 4), 0] : [0, r],
       className: "place-label origin",
     })
     .addTo(placesLayer);
@@ -192,8 +279,7 @@ function drawMap() {
   for (const p of snap.packages) {
     const key = `${p.dest.lat},${p.dest.lon}`;
     if (!destLabels.has(key)) {
-      const r = groups.get(key) ? fanRadius(groups.get(key).length) : 0;
-      const tip = L.tooltip({ permanent: true, direction: "right", offset: [r + 8, 0], className: "place-label" })
+      const tip = L.tooltip({ permanent: true, direction: "right", offset: [markRadius(key) + 2, 0], className: "place-label" })
         .setLatLng(ll(p.dest))
         .setContent(p.dest.name);
       placesLayer.addLayer(tip);
@@ -219,43 +305,39 @@ function drawMap() {
       .bindTooltip(p.label, { direction: "top", offset: [0, -6], className: "mark-tip" })
       .addTo(placesLayer);
 
-    const group = groups.get(`${p.current.lat},${p.current.lon}`);
-    const k = group.indexOf(p);
-    const n = group.length;
-    const r = fanRadius(n);
-    const angle = -Math.PI / 2 + (2 * Math.PI * k) / n;
-    const dx = r * Math.cos(angle);
-    const dy = r * Math.sin(angle);
-    const pin = L.marker(ll(p.current), {
-      icon: L.divIcon({
-        className: "pin",
-        html: `<span style="--c:${c}"></span>`,
-        iconSize: [24, 24],
-        iconAnchor: [12 - dx, 12 - dy],
-      }),
-      keyboard: false,
-      riseOnHover: true,
-    })
-      .bindTooltip(() => tipHtml(p), { direction: "top", offset: [dx, dy - 10], className: "mark-tip" })
-      .on("mouseover", () => setHover(p.label))
-      .on("mouseout", () => setHover(null))
-      .on("click", () => select(p.label, true))
-      .addTo(pinsLayer);
-    pin.getElement()?.setAttribute("data-stage", p.stage);
-    marks.set(p.label, { lines, dest, pin });
+    marks.set(p.label, { lines, dest });
   }
 
-  if (!fitted) {
-    const pts = [ll(snap.origin), ...snap.packages.flatMap((p) => [ll(p.dest), ll(p.current)])];
-    // Extra room on the right for the place labels, less of it on a phone.
-    const small = map.getSize().x < 600;
-    map.fitBounds(L.latLngBounds(pts), {
-      paddingTopLeft: small ? [16, 24] : [40, 40],
-      paddingBottomRight: small ? [48, 24] : [110, 40],
-      maxZoom: 7,
+  for (const members of groups.values()) {
+    const one = members.length === 1 ? members[0] : null;
+    const stages = new Set(members.map((p) => p.stage));
+    const stage = stages.size === 1 ? members[0].stage : "mixed";
+    const fill = stage === "mixed" ? css("--muted") : color(stage);
+    const html = one
+      ? `<span style="--c:${fill}"></span>`
+      : `<span class="count" style="--c:${fill};color:${inkOn(fill)}">${members.length}</span>`;
+    const marker = L.marker(ll(members[0].current), {
+      icon: L.divIcon({ className: "pin", html, iconSize: [28, 28] }),
+      keyboard: false,
+      riseOnHover: true,
     });
-    fitted = true;
+    if (one) {
+      marker
+        .bindTooltip(() => tipHtml(one), { direction: "top", offset: [0, -10], className: "mark-tip" })
+        .on("mouseover", () => setHover(one.label))
+        .on("mouseout", () => setHover(null))
+        .on("click", () => select(one.label, { scroll: true }));
+    } else {
+      marker
+        .bindTooltip(() => groupTip(members), { direction: "top", offset: [0, -14], className: "mark-tip" })
+        .bindPopup(() => groupList(members), { className: "group-popup", closeButton: false, offset: [0, -8] })
+        .on("popupopen", () => marker.closeTooltip());
+    }
+    marker.addTo(pinsLayer);
+    marker.getElement()?.setAttribute("data-stage", stage);
+    pins.push({ marker, labels: members.map((p) => p.label) });
   }
+
   applyFocus();
 }
 
@@ -269,11 +351,13 @@ function applyFocus() {
       if (on) l.bringToFront();
     }
     m.dest.setStyle({ opacity: off ? 0.25 : 1 });
-    const el = m.pin.getElement();
-    el?.classList.toggle("dim", off);
+  }
+  for (const { marker, labels } of pins) {
+    const on = labels.includes(focus);
+    const el = marker.getElement();
+    el?.classList.toggle("dim", focus !== null && !on);
     el?.classList.toggle("focus", on);
-    if (on) m.pin.setZIndexOffset(1000);
-    else m.pin.setZIndexOffset(0);
+    marker.setZIndexOffset(on ? 1000 : 0);
   }
   for (const { tip, labels } of destLabels.values()) {
     tip.getElement()?.classList.toggle("dim", focus !== null && !labels.includes(focus));
@@ -282,13 +366,16 @@ function applyFocus() {
   document.querySelectorAll(".pkg").forEach((li) => li.classList.toggle("focus", li.dataset.label === focus));
 }
 
-/** Hide place labels that would overlap one already shown: origin first, then the focused package's. */
+/**
+ * Hide place labels that would overlap a package marker or a label already shown:
+ * origin first, then the focused package's.
+ */
 function declutter() {
   const focus = hovered ?? selected;
   const tips = [...destLabels.values()]
     .sort((a, b) => Number(b.labels.includes(focus)) - Number(a.labels.includes(focus)))
     .map((d) => d.tip.getElement());
-  const shown = [];
+  const shown = pins.map(({ marker }) => marker.getElement()?.firstElementChild?.getBoundingClientRect()).filter(Boolean);
   for (const el of [originLabel?.getTooltip()?.getElement(), ...tips]) {
     if (!el) continue;
     el.classList.remove("crowded");
@@ -304,13 +391,13 @@ function setHover(label) {
   applyFocus();
 }
 
-function select(label, fromMap = false) {
-  selected = selected === label ? null : label;
+function select(label, { scroll = false, toggle = true } = {}) {
+  selected = selected === label && toggle ? null : label;
   document.querySelectorAll(".pkg").forEach((li) => {
     const open = li.dataset.label === selected;
     li.querySelector(".pkg-head").setAttribute("aria-expanded", String(open));
     li.querySelector(".timeline").hidden = !open;
-    if (open && fromMap) li.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (open && scroll) li.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
   applyFocus();
 }
